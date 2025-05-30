@@ -46,10 +46,18 @@ func isStarExpr(expr ast.Expr) (bool, ast.Expr) {
 // isPointerType checks if the expression is a pointer type.
 // This is for types that are always implemented as pointers and therefore should
 // not be the underlying type of a star expr.
-func isPointerType(expr ast.Expr) bool {
+func isPointerType(pass *analysis.Pass, expr ast.Expr) bool {
 	switch expr.(type) {
 	case *ast.StarExpr, *ast.MapType, *ast.ArrayType:
 		return true
+	case *ast.Ident:
+		// If the ident is a type alias, keep checking until we find the underlying type.
+		typeSpec, ok := utils.LookupTypeSpec(pass, expr.(*ast.Ident))
+		if !ok {
+			return false
+		}
+
+		return isPointerType(pass, typeSpec.Type)
 	default:
 		return false
 	}
@@ -297,23 +305,13 @@ func floatRangeIncludesZero(minimum, maximum *float64) bool {
 		ptr.Deref(minimum, 0) < 0 && ptr.Deref(maximum, 0) > 0
 }
 
-func isZeroValueValid(pass *analysis.Pass, field *ast.Field, typeExpr ast.Expr, markersAccess markershelper.Markers, fieldTagInfo extractjsontags.FieldTagInfo) bool {
-	if fieldTagInfo.OmitEmpty {
-		// If the field is omitted, we can use a zero value.
-		// For structs, if they aren't a pointer another error will be raised.
-		return true
-	}
-
-	isPointer, underlyingType := isStarExpr(typeExpr)
-	if isPointer {
-		// The field is a pointer without omitempty, so we cannot use a zero value unless the field is nullable.
-		return markersAccess.FieldMarkers(field).Has(markers.NullableMarker)
-	}
+func isZeroValueValid(pass *analysis.Pass, field *ast.Field, typeExpr ast.Expr, markersAccess markershelper.Markers, fieldTagInfo extractjsontags.FieldTagInfo) (bool, bool) {
+	_, underlyingType := isStarExpr(typeExpr)
 
 	switch t := underlyingType.(type) {
 	case *ast.StructType:
 		// For structs, we have to check if there are any non-omitted fields, that do not accept a zero value.
-		return isStructZeroValueValid(pass, t, markersAccess)
+		return isStructZeroValueValid(pass, field, t, markersAccess)
 	case *ast.Ident:
 		return isIdentZeroValueValid(pass, field, t, markersAccess)
 	case *ast.MapType:
@@ -321,15 +319,17 @@ func isZeroValueValid(pass *analysis.Pass, field *ast.Field, typeExpr ast.Expr, 
 	case *ast.ArrayType:
 		// For arrays, we can use a zero value if the array is not required to have a minimum number of items.
 		return isArrayZeroValueValid(field, t, markersAccess)
+	case *ast.StarExpr:
+		return isZeroValueValid(pass, field, t.X, markersAccess, fieldTagInfo)
 	}
 
-	// For other types, we assume that zero value is valid.
-	return true
+	// We don't know what the type is so can't assert the zero value is valid.
+	return false, false
 }
 
-func isStructZeroValueValid(pass *analysis.Pass, structType *ast.StructType, markersAccess markershelper.Markers) bool {
+func isStructZeroValueValid(pass *analysis.Pass, field *ast.Field, structType *ast.StructType, markersAccess markershelper.Markers) (bool, bool) {
 	if structType == nil {
-		return true
+		return false, false
 	}
 
 	jsonTagInfo, ok := pass.ResultOf[extractjsontags.Analyzer].(extractjsontags.StructFieldTags)
@@ -337,20 +337,51 @@ func isStructZeroValueValid(pass *analysis.Pass, structType *ast.StructType, mar
 		panic("could not get struct field tags from pass result")
 	}
 
+	zeroValueValid := true
+	nonOmittedFields := 0
+
 	for _, field := range structType.Fields.List {
 		fieldTagInfo := jsonTagInfo.FieldTags(field)
 
-		if !isZeroValueValid(pass, field, field.Type, markersAccess, fieldTagInfo) {
-			return false
+		if fieldTagInfo.OmitEmpty {
+			// If the field is omitted, we can use a zero value.
+			// For structs, if they aren't a pointer another error will be raised.
+			continue
 		}
+
+		nonOmittedFields++
+
+		validValue, _ := isZeroValueValid(pass, field, field.Type, markersAccess, fieldTagInfo)
+
+		// If either value is false then the collected values will be false.
+		zeroValueValid = zeroValueValid && validValue
 	}
 
-	return true
+	markerSet := combinedMarkers(markersAccess, field, structType)
+	minProperties, err := getMarkerIntegerValueByName(markerSet, markers.KubebuilderMinPropertiesMarker)
+	if err != nil && !errors.Is(err, errMarkerMissingValue) {
+		pass.Reportf(field.Pos(), "struct %s has an invalid minProperties marker: %v", utils.FieldName(field), err)
+		return false, false
+	}
+
+	if minProperties != nil && *minProperties > nonOmittedFields {
+		// The struct requires more properties than would be marshalled in the zero value of the struct.
+		zeroValueValid = false
+	}
+
+	completeStructValidation := true
+	if minProperties == nil && nonOmittedFields == 0 {
+		// If the struct has no non-omitted fields, then the zero value of the struct is `{}`.
+		// This generally means that the validation is incomplete as the difference between omitting the field and not omitting is not clear.
+		completeStructValidation = false
+	}
+
+	return zeroValueValid, completeStructValidation
 }
 
-func isIdentZeroValueValid(pass *analysis.Pass, field *ast.Field, ident *ast.Ident, markersAccess markershelper.Markers) bool {
+func isIdentZeroValueValid(pass *analysis.Pass, field *ast.Field, ident *ast.Ident, markersAccess markershelper.Markers) (bool, bool) {
 	if ident == nil {
-		return true
+		return false, false
 	}
 
 	// Check if the identifier is a known type that can have a zero value.
@@ -359,18 +390,18 @@ func isIdentZeroValueValid(pass *analysis.Pass, field *ast.Field, ident *ast.Ide
 		return isStringZeroValueValid(field, markersAccess)
 	case "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64":
-		return isIntegerZeroValueValid(field, markersAccess)
+		return isIntegerZeroValueValid(pass, field, markersAccess)
 	case "float32", "float64":
-		return isFloatZeroValueValid(field, markersAccess)
+		return isFloatZeroValueValid(pass, field, markersAccess)
 	case "bool":
 		// For bool, we can always use a zero value.
-		return true
+		return true, true
 	}
 
 	// If the ident isn't one of the above, check the underlying type spec.
 	typeSpec, ok := utils.LookupTypeSpec(pass, ident)
 	if !ok {
-		return false
+		return false, false
 	}
 
 	jsonTagInfo, ok := pass.ResultOf[extractjsontags.Analyzer].(extractjsontags.StructFieldTags)
@@ -383,60 +414,78 @@ func isIdentZeroValueValid(pass *analysis.Pass, field *ast.Field, ident *ast.Ide
 
 // isStringZeroValueValid checks if a string field can have a zero value.
 // This would be true when either there is no minimum length marker, or when the minimmum length marker is set to 0.
-func isStringZeroValueValid(field *ast.Field, markersAccess markershelper.Markers) bool {
+func isStringZeroValueValid(field *ast.Field, markersAccess markershelper.Markers) (bool, bool) {
 	fieldMarkers := markersAccess.FieldMarkers(field)
 
 	if stringFieldIsEnum(fieldMarkers) {
-		return enumFieldAllowsEmpty(fieldMarkers)
+		return enumFieldAllowsEmpty(fieldMarkers), true
 	}
 
-	return !fieldMarkers.Has(markers.KubebuilderMinLengthMarker) || fieldMarkers.HasWithValue(fmt.Sprintf("%s=0", markers.KubebuilderMinLengthMarker))
+	hasMinLengthMarker := fieldMarkers.Has(markers.KubebuilderMinLengthMarker)
+	minLengthMarkerIsZero := fieldMarkers.HasWithValue(fmt.Sprintf("%s=0", markers.KubebuilderMinLengthMarker))
+
+	return !hasMinLengthMarker || minLengthMarkerIsZero, hasMinLengthMarker
 }
 
 // isIntegerZeroValueValid checks if an integer field can have a zero value.
-func isIntegerZeroValueValid(field *ast.Field, markersAccess markershelper.Markers) bool {
+func isIntegerZeroValueValid(pass *analysis.Pass, field *ast.Field, markersAccess markershelper.Markers) (bool, bool) {
 	fieldMarkers := markersAccess.FieldMarkers(field)
 
 	minimum, err := getMarkerIntegerValueByName(fieldMarkers, markers.KubebuilderMinimumMarker)
 	if err != nil && !errors.Is(err, errMarkerMissingValue) {
-		return false
+		pass.Reportf(field.Pos(), "field %s has an invalid minimum marker: %v", utils.FieldName(field), err)
+		return false, false
 	}
 
 	maximum, err := getMarkerIntegerValueByName(fieldMarkers, markers.KubebuilderMaximumMarker)
 	if err != nil && !errors.Is(err, errMarkerMissingValue) {
-		return false
+		pass.Reportf(field.Pos(), "field %s has an invalid maximum marker: %v", utils.FieldName(field), err)
+		return false, false
 	}
 
-	return ptr.Deref(minimum, -1) <= 0 && ptr.Deref(maximum, 1) >= 0
+	hasGreaterThanZeroMinimum := minimum != nil && *minimum >= 0
+	hasLessThanZeroMaximum := maximum != nil && *maximum <= 0
+	hasCompleteRange := minimum != nil && maximum != nil && *minimum <= *maximum
+
+	return ptr.Deref(minimum, -1) <= 0 && ptr.Deref(maximum, 1) >= 0, hasCompleteRange || hasGreaterThanZeroMinimum || hasLessThanZeroMaximum
 }
 
 // isFloatZeroValueValid checks if a float field can have a zero value.
-func isFloatZeroValueValid(field *ast.Field, markersAccess markershelper.Markers) bool {
+func isFloatZeroValueValid(pass *analysis.Pass, field *ast.Field, markersAccess markershelper.Markers) (bool, bool) {
 	fieldMarkers := markersAccess.FieldMarkers(field)
 
 	minimum, err := getMarkerFloatValueByName(fieldMarkers, markers.KubebuilderMinimumMarker)
 	if err != nil && !errors.Is(err, errMarkerMissingValue) {
-		return false
+		pass.Reportf(field.Pos(), "field %s has an invalid minimum marker: %v", utils.FieldName(field), err)
+		return false, false
 	}
 
 	maximum, err := getMarkerFloatValueByName(fieldMarkers, markers.KubebuilderMaximumMarker)
 	if err != nil && !errors.Is(err, errMarkerMissingValue) {
-		return false
+		pass.Reportf(field.Pos(), "field %s has an invalid maximum marker: %v", utils.FieldName(field), err)
+		return false, false
 	}
 
-	return ptr.Deref(minimum, -1) <= 0 && ptr.Deref(maximum, 1) >= 0
+	hasGreaterThanZeroMinimum := minimum != nil && *minimum >= 0
+	hasLessThanZeroMaximum := maximum != nil && *maximum <= 0
+	hasCompleteRange := minimum != nil && maximum != nil && *minimum <= *maximum
+
+	return ptr.Deref(minimum, -1) <= 0 && ptr.Deref(maximum, 1) >= 0, hasCompleteRange || hasGreaterThanZeroMinimum || hasLessThanZeroMaximum
 }
 
 // isMapZeroValueValid checks if a map field can have a zero value.
 // For maps, this means there is no minProperties marker, or the minProperties marker is set to 0.
-func isMapZeroValueValid(field *ast.Field, markersAccess markershelper.Markers) bool {
+func isMapZeroValueValid(field *ast.Field, markersAccess markershelper.Markers) (bool, bool) {
 	fieldMarkers := markersAccess.FieldMarkers(field)
 
-	return !fieldMarkers.Has(markers.KubebuilderMinPropertiesMarker) || fieldMarkers.HasWithValue(fmt.Sprintf("%s=0", markers.KubebuilderMinPropertiesMarker))
+	hasMinPropertiesMarker := fieldMarkers.Has(markers.KubebuilderMinPropertiesMarker)
+	minPropertiesMarkerIsZero := fieldMarkers.HasWithValue(fmt.Sprintf("%s=0", markers.KubebuilderMinPropertiesMarker))
+
+	return !hasMinPropertiesMarker || minPropertiesMarkerIsZero, hasMinPropertiesMarker
 }
 
 // isArrayZeroValueValid checks if an array field can have a zero value.
-func isArrayZeroValueValid(field *ast.Field, arrayType *ast.ArrayType, markersAccess markershelper.Markers) bool {
+func isArrayZeroValueValid(field *ast.Field, arrayType *ast.ArrayType, markersAccess markershelper.Markers) (bool, bool) {
 	// Arrays of bytes are special cased and treated as strings.
 	if ident, ok := arrayType.Elt.(*ast.Ident); ok && ident.Name == "byte" {
 		return isStringZeroValueValid(field, markersAccess)
@@ -447,10 +496,10 @@ func isArrayZeroValueValid(field *ast.Field, arrayType *ast.ArrayType, markersAc
 	// For arrays, we can use a zero value if the array is not required to have a minimum number of items.
 	minItems, err := getMarkerIntegerValueByName(fieldMarkers, markers.KubebuilderMinItemsMarker)
 	if err != nil && !errors.Is(err, errMarkerMissingValue) {
-		return false
+		return false, false
 	}
 
-	return minItems == nil || *minItems == 0
+	return minItems == nil || *minItems == 0, minItems != nil
 }
 
 func stringFieldIsEnum(fieldMarkers markershelper.MarkerSet) bool {
@@ -470,4 +519,13 @@ func enumFieldAllowsEmpty(fieldMarkers markershelper.MarkerSet) bool {
 	}
 
 	return false
+}
+
+func combinedMarkers(markersAccess markershelper.Markers, field *ast.Field, structType *ast.StructType) markershelper.MarkerSet {
+	markers := markersAccess.FieldMarkers(field)
+	structMarkers := markersAccess.StructMarkers(structType)
+
+	markers.Insert(structMarkers.UnsortedList()...)
+
+	return markers
 }

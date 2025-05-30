@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
-	"go/token"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	kalerrors "sigs.k8s.io/kube-api-linter/pkg/analysis/errors"
@@ -125,51 +125,21 @@ func (a *analyzer) checkField(pass *analysis.Pass, field *ast.Field, markersAcce
 		return
 	}
 
-	a.checkFieldOmitEmpty(pass, field, fieldName, jsonTags)
-
 	if field.Type == nil {
 		// The field has no type? We can't check if it's a pointer.
 		return
 	}
 
 	a.checkFieldPointers(pass, field, fieldName, markersAccess, jsonTags)
-}
 
-// checkFieldOmitEmpty checks if the field has the omitempty tag.
-// Normally, all optional fields should have the omitempty tag.
-// In certain cases, you may not want to have the omitempty tag
-// (such as to be able to marshal an empty object with all possible options shown)
-// and when this is desired, there is an option to ignore the omitempty tag.
-func (a *analyzer) checkFieldOmitEmpty(pass *analysis.Pass, field *ast.Field, fieldName string, jsonTags extractjsontags.FieldTagInfo) {
-	switch {
-	case jsonTags.OmitEmpty, a.omitEmptyPolicy == config.OptionalFieldsOmitEmptyPolicyIgnore:
-		// Nothing to do, either we have omitempty, or we are ignoring it.
-	case a.omitEmptyPolicy == config.OptionalFieldsOmitEmptyPolicySuggestFix:
-		pass.Report(analysis.Diagnostic{
-			Pos:     field.Pos(),
-			Message: fmt.Sprintf("field %s is optional and should be omitempty", fieldName),
-			SuggestedFixes: []analysis.SuggestedFix{
-				{
-					Message: "add the omitempty tag",
-					TextEdits: []analysis.TextEdit{
-						{
-							Pos:     jsonTags.Pos + token.Pos(len(jsonTags.Name)),
-							NewText: []byte(",omitempty"),
-						},
-					},
-				},
-			},
-		})
-	case a.omitEmptyPolicy == config.OptionalFieldsOmitEmptyPolicyWarn:
-		pass.Reportf(field.Pos(), "field %s is optional and should be omitempty", fieldName)
-	}
+	a.checkFieldProperties(pass, field, fieldName, markersAccess, jsonTags)
 }
 
 // checkFieldPointers is used to determine if a field should be a pointer, and advise on the correct action.
 func (a *analyzer) checkFieldPointers(pass *analysis.Pass, field *ast.Field, fieldName string, markersAccess markershelper.Markers, jsonTags extractjsontags.FieldTagInfo) {
 	isStarExpr, underlyingType := isStarExpr(field.Type)
 
-	if isPointerType(underlyingType) {
+	if isPointerType(pass, underlyingType) {
 		a.checkFieldPointersPointerTypes(pass, field, fieldName, isStarExpr, markersAccess, jsonTags)
 
 		return
@@ -177,9 +147,9 @@ func (a *analyzer) checkFieldPointers(pass *analysis.Pass, field *ast.Field, fie
 
 	switch a.pointerPreference {
 	case config.OptionalFieldsPointerPreferenceAlways:
-		a.checkFieldPointersPreferenceAlways(pass, field, fieldName, isStarExpr)
+		//
 	case config.OptionalFieldsPointerPreferenceWhenRequired:
-		a.checkFieldPointersPreferenceWhenRequired(pass, field, fieldName, isStarExpr, underlyingType, markersAccess, jsonTags)
+		// a.checkFieldPointersPreferenceWhenRequired(pass, field, fieldName, isStarExpr, underlyingType, markersAccess, jsonTags)
 	}
 }
 
@@ -191,13 +161,6 @@ func (a *analyzer) checkFieldPointersPointerTypes(pass *analysis.Pass, field *as
 	if a.omitEmptyPolicy == config.OptionalFieldsOmitEmptyPolicyIgnore && !jsonTags.OmitEmpty {
 		a.checkFieldPointersPointerTypesWithoutOmitEmpty(pass, field, fieldName, markersAccess)
 	}
-
-	// Pointer types should not be pointered again.
-	if !isStarExpr {
-		return
-	}
-
-	reportShouldRemovePointer(pass, field, a.pointerPolicy, fieldName, "field %s is a pointer type and should not be a pointer")
 }
 
 // checkFieldPointersPointerTypesWithoutOmitEmpty handles the case where the field is a pointer type (array or map)
@@ -211,15 +174,6 @@ func (a *analyzer) checkFieldPointersPointerTypesWithoutOmitEmpty(pass *analysis
 	case *ast.ArrayType:
 		reportShouldRemoveAllInstancesOfIntegerMarker(pass, field, markersAccess, minItemsMarker, fieldName, "field %s has a greater than zero minimum number of items without omitempty. The minimum number of items should be removed.")
 	}
-}
-
-// checkFieldPointersPreferenceAlways checks if the field is a pointer and if not, suggests that it should be.
-func (a *analyzer) checkFieldPointersPreferenceAlways(pass *analysis.Pass, field *ast.Field, fieldName string, isStarExpr bool) {
-	if isStarExpr {
-		return // The field is already a pointer, so we don't need to do anything.
-	}
-
-	reportShouldAddPointer(pass, field, a.pointerPolicy, fieldName, "field %s is optional and should be a pointer")
 }
 
 // checkFieldPointersPreferenceWhenRequired checks if the field needs to be a pointer.
@@ -279,7 +233,7 @@ func (a *analyzer) checkFieldPointersPreferenceWhenRequiredIdentObj(pass *analys
 func (a *analyzer) checkFieldPointersPreferenceWhenRequiredStructType(pass *analysis.Pass, field *ast.Field, fieldName string, isStarExpr bool, typeExpr *ast.StructType, markersAccess markershelper.Markers, jsonTags extractjsontags.FieldTagInfo) {
 	hasRequiredFields := structContainsRequiredFields(typeExpr, markersAccess)
 
-	validZeroValueStruct := isStructZeroValueValid(pass, typeExpr, markersAccess)
+	validZeroValueStruct, _ := isStructZeroValueValid(pass, field, typeExpr, markersAccess)
 
 	hasMinimumProperties, err := structHasGreaterThanZeroMinProperties(typeExpr, markersAccess.StructMarkers(typeExpr))
 	if err != nil {
@@ -578,4 +532,219 @@ func defaultConfig(cfg *config.OptionalFieldsConfig) {
 	if cfg.OmitEmpty.Policy == "" {
 		cfg.OmitEmpty.Policy = config.OptionalFieldsOmitEmptyPolicySuggestFix
 	}
+}
+
+func (a *analyzer) checkFieldProperties(pass *analysis.Pass, field *ast.Field, fieldName string, markersAccess markershelper.Markers, jsonTags extractjsontags.FieldTagInfo) {
+	hasValidZeroValue, completeValidation := isZeroValueValid(pass, field, field.Type, markersAccess, jsonTags)
+	hasOmitEmpty := jsonTags.OmitEmpty
+	isPointer, underlying := isStarExpr(field.Type)
+	isStruct := isStructType(pass, field.Type)
+
+	if a.pointerPreference == config.OptionalFieldsPointerPreferenceAlways {
+		// The field must always be a pointer, pointers require omitempty, so enforce that too.
+		a.handleFieldShouldBePointer(pass, field, fieldName, isPointer, underlying)
+		a.handleFieldShouldHaveOmitEmpty(pass, field, fieldName, hasOmitEmpty, jsonTags)
+		return
+	}
+
+	// The pointer preference is now when required.
+
+	if a.omitEmptyPolicy != config.OptionalFieldsOmitEmptyPolicyIgnore {
+		// In this case, we should always add the omitempty if it isn't present.
+		a.handleFieldShouldHaveOmitEmpty(pass, field, fieldName, hasOmitEmpty, jsonTags)
+
+		switch {
+		case hasValidZeroValue && !completeValidation:
+			a.handleIncompleteFieldValidation(pass, field, fieldName, isPointer, underlying)
+			fallthrough // Since it's a valid zero value, we should still enforce the pointer.
+		case hasValidZeroValue, isStruct:
+			// The field validation infers that the zero value is valid, the field needs to be a pointer.
+			// Optional structs with omitempty should always be pointers, else they won't actually be omitted.
+			a.handleFieldShouldBePointer(pass, field, fieldName, isPointer, underlying)
+		case !hasValidZeroValue && completeValidation && !isStruct:
+			// The validation is fully complete, and the zero value is not valid, so we don't need a pointer.
+			a.handleFieldShouldNotBePointer(pass, field, fieldName, isPointer)
+		}
+	} else {
+		// In this case, if the field doesn't have omitempty, we won't force adding it.
+	}
+}
+
+func (a *analyzer) handleFieldShouldBePointer(pass *analysis.Pass, field *ast.Field, fieldName string, isPointer bool, underlying ast.Expr) {
+	if isPointerType(pass, underlying) {
+		if isPointer {
+			switch a.pointerPolicy {
+			case config.OptionalFieldsPointerPolicySuggestFix:
+				reportShouldRemovePointer(pass, field, config.OptionalFieldsPointerPolicySuggestFix, fieldName, "field %s is optional but the underlying type does not need to be a pointer. The pointer should be removed.")
+			case config.OptionalFieldsPointerPolicyWarn:
+				pass.Reportf(field.Pos(), "field %s is optional but the underlying type does not need to be a pointer. The pointer should be removed.", fieldName)
+			}
+		}
+
+		return
+	}
+
+	if isPointer {
+		return
+	}
+
+	switch a.pointerPolicy {
+	case config.OptionalFieldsPointerPolicySuggestFix:
+		reportShouldAddPointer(pass, field, config.OptionalFieldsPointerPolicySuggestFix, fieldName, "field %s is optional and should be a pointer")
+	case config.OptionalFieldsPointerPolicyWarn:
+		pass.Reportf(field.Pos(), "field %s is optional and should be a pointer", fieldName)
+	}
+}
+
+func (a *analyzer) handleFieldShouldNotBePointer(pass *analysis.Pass, field *ast.Field, fieldName string, isPointer bool) {
+	if !isPointer {
+		return
+	}
+
+	reportShouldRemovePointer(pass, field, a.pointerPolicy, fieldName, "field %s is optional and does not allow the zero value. The field does not need to be a pointer.")
+}
+
+func (a *analyzer) handleFieldShouldHaveOmitEmpty(pass *analysis.Pass, field *ast.Field, fieldName string, hasOmitEmpty bool, jsonTags extractjsontags.FieldTagInfo) {
+	if hasOmitEmpty {
+		return
+	}
+
+	switch a.omitEmptyPolicy {
+	case config.OptionalFieldsOmitEmptyPolicyIgnore:
+		// Nothing to do, we are ignoring the omitempty tag.
+	case config.OptionalFieldsOmitEmptyPolicySuggestFix:
+		reportShouldAddOmitEmpty(pass, field, fieldName, "field %s is optional and should have the omitempty tag", jsonTags)
+	case config.OptionalFieldsOmitEmptyPolicyWarn:
+		pass.Reportf(field.Pos(), "field %s is optional and should have the omitempty tag", fieldName)
+	}
+}
+
+func (a *analyzer) handleIncompleteFieldValidation(pass *analysis.Pass, field *ast.Field, fieldName string, isPointer bool, underlying ast.Expr) {
+	if isPointer || isPointerType(pass, underlying) {
+		// Don't warn them if the field is already a pointer.
+		// If they change the validation then they'll fall into the correct logic for categorizing the field.
+		// When the field is a pointer type (e.g. map, array), we don't need to warn them either as they should not make these fields pointers.
+		return
+	}
+
+	zeroValue := getTypedZeroValue(pass, underlying)
+	validationHint := getTypedValidationHint(pass, underlying)
+
+	pass.Reportf(field.Pos(), "field %s is optional and has a valid zero value (%s), but the validation is not complete (e.g. %s). The field should be a pointer to allow the zero value to be set. If the zero value is not a valid use case, complete the validation and remove the pointer.", fieldName, zeroValue, validationHint)
+}
+
+func getTypedZeroValue(pass *analysis.Pass, expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return getIdentZeroValue(pass, t)
+	case *ast.StructType:
+		return getStructZeroValue(pass, t)
+	case *ast.ArrayType:
+		return "[]"
+	case *ast.MapType:
+		return "{}"
+	default:
+		return ""
+	}
+}
+
+func getIdentZeroValue(pass *analysis.Pass, ident *ast.Ident) string {
+	switch ident.Name {
+	case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64":
+		return "0"
+	case "string":
+		return `""`
+	case "bool":
+		return "false"
+	case "float32", "float64":
+		return "0.0"
+	}
+
+	typeSpec, ok := utils.LookupTypeSpec(pass, ident)
+	if !ok {
+		return ""
+	}
+
+	return getTypedZeroValue(pass, typeSpec.Type)
+}
+
+func getStructZeroValue(pass *analysis.Pass, structType *ast.StructType) string {
+	value := "{"
+
+	jsonTagInfo, ok := pass.ResultOf[extractjsontags.Analyzer].(extractjsontags.StructFieldTags)
+	if !ok {
+		panic("could not get struct field tags from pass result")
+	}
+
+	for _, field := range structType.Fields.List {
+		fieldTagInfo := jsonTagInfo.FieldTags(field)
+
+		if fieldTagInfo.OmitEmpty {
+			// If the field is omitted, we can use a zero value.
+			// For structs, if they aren't a pointer another error will be raised.
+			continue
+		}
+
+		value += fmt.Sprintf("%q: %s, ", fieldTagInfo.Name, getTypedZeroValue(pass, field.Type))
+	}
+
+	value = strings.TrimSuffix(value, ", ")
+	value += "}"
+
+	return value
+}
+
+func getTypedValidationHint(pass *analysis.Pass, expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return getIdentValidationHint(pass, t)
+	case *ast.StructType:
+		return "min properties/adding required fields"
+	case *ast.ArrayType:
+		return "min items"
+	case *ast.MapType:
+		return "min properties"
+	default:
+		return ""
+	}
+}
+
+func getIdentValidationHint(pass *analysis.Pass, ident *ast.Ident) string {
+	switch ident.Name {
+	case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64":
+		return "minimum/maximum"
+	case "string":
+		return "minimum length"
+	case "bool":
+		return ""
+	case "float32", "float64":
+		return "minimum/maximum"
+	}
+
+	typeSpec, ok := utils.LookupTypeSpec(pass, ident)
+	if !ok {
+		return ""
+	}
+
+	return getTypedValidationHint(pass, typeSpec.Type)
+}
+
+func isStructType(pass *analysis.Pass, expr ast.Expr) bool {
+	_, underlying := isStarExpr(expr)
+
+	if _, ok := underlying.(*ast.StructType); ok {
+		return true
+	}
+
+	// Where there's an ident, recurse to find the underlying type.
+	if ident, ok := underlying.(*ast.Ident); ok {
+		typeSpec, ok := utils.LookupTypeSpec(pass, ident)
+		if !ok {
+			return false
+		}
+
+		return isStructType(pass, typeSpec.Type)
+	}
+
+	return false
 }

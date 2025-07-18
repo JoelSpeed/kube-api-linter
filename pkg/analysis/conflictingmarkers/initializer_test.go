@@ -43,15 +43,15 @@ var _ = Describe("conflictingmarkers initializer", func() {
 				Expect(errs).To(HaveLen(0), "No errors were expected")
 			}
 		},
-			Entry("With a valid empty config", testCase{
+			Entry("With an empty config", testCase{
 				config: conflictingmarkers.ConflictingMarkersConfig{
-					CustomConflicts: []conflictingmarkers.ConflictSet{},
+					ConflictSets: []conflictingmarkers.ConflictSet{},
 				},
-				expectedErr: "",
+				expectedErr: "conflictingmarkers.conflictSets: Required value: conflictSets is required and must contain at least 1 element",
 			}),
 			Entry("With a valid custom conflict", testCase{
 				config: conflictingmarkers.ConflictingMarkersConfig{
-					CustomConflicts: []conflictingmarkers.ConflictSet{
+					ConflictSets: []conflictingmarkers.ConflictSet{
 						{
 							Name:        "test_conflict",
 							SetA:        []string{"marker1"},
@@ -64,7 +64,7 @@ var _ = Describe("conflictingmarkers initializer", func() {
 			}),
 			Entry("With missing name", testCase{
 				config: conflictingmarkers.ConflictingMarkersConfig{
-					CustomConflicts: []conflictingmarkers.ConflictSet{
+					ConflictSets: []conflictingmarkers.ConflictSet{
 						{
 							Name:        "",
 							SetA:        []string{"marker1"},
@@ -73,11 +73,11 @@ var _ = Describe("conflictingmarkers initializer", func() {
 						},
 					},
 				},
-				expectedErr: "conflictingmarkers.customConflicts[0].name: Required value: name is required",
+				expectedErr: "conflictingmarkers.conflictSets[0].name: Required value: name is required",
 			}),
 			Entry("With overlapping markers", testCase{
 				config: conflictingmarkers.ConflictingMarkersConfig{
-					CustomConflicts: []conflictingmarkers.ConflictSet{
+					ConflictSets: []conflictingmarkers.ConflictSet{
 						{
 							Name:        "test_conflict",
 							SetA:        []string{"marker1", "marker2"},
@@ -86,11 +86,11 @@ var _ = Describe("conflictingmarkers initializer", func() {
 						},
 					},
 				},
-				expectedErr: "conflictingmarkers.customConflicts[0]: Invalid value: conflictingmarkers.ConflictSet{Name:\"test_conflict\", SetA:[]string{\"marker1\", \"marker2\"}, SetB:[]string{\"marker2\", \"marker3\"}, Description:\"Test conflict\"}: sets cannot contain overlapping markers",
+				expectedErr: "conflictingmarkers.conflictSets[0]: Invalid value: conflictingmarkers.ConflictSet{Name:\"test_conflict\", SetA:[]string{\"marker1\", \"marker2\"}, SetB:[]string{\"marker2\", \"marker3\"}, Description:\"Test conflict\"}: sets cannot contain overlapping markers",
 			}),
 			Entry("With missing description", testCase{
 				config: conflictingmarkers.ConflictingMarkersConfig{
-					CustomConflicts: []conflictingmarkers.ConflictSet{
+					ConflictSets: []conflictingmarkers.ConflictSet{
 						{
 							Name: "test_conflict",
 							SetA: []string{"marker1"},
@@ -98,7 +98,7 @@ var _ = Describe("conflictingmarkers initializer", func() {
 						},
 					},
 				},
-				expectedErr: "conflictingmarkers.customConflicts[0].description: Required value: description is required",
+				expectedErr: "conflictingmarkers.conflictSets[0].description: Required value: description is required",
 			}),
 		)
 	})

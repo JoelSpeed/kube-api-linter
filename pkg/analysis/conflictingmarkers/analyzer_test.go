@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/tools/go/analysis/analysistest"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/conflictingmarkers"
+	markersconsts "sigs.k8s.io/kube-api-linter/pkg/markers"
 )
 
 func TestDefaultConfiguration(t *testing.T) {
@@ -27,7 +28,22 @@ func TestDefaultConfiguration(t *testing.T) {
 
 	initializer := conflictingmarkers.Initializer()
 
-	analyzer, err := initializer.Init(&conflictingmarkers.ConflictingMarkersConfig{})
+	analyzer, err := initializer.Init(&conflictingmarkers.ConflictingMarkersConfig{
+		ConflictSets: []conflictingmarkers.ConflictSet{
+			{
+				Name:        "optional_vs_required",
+				SetA:        []string{markersconsts.OptionalMarker, markersconsts.KubebuilderOptionalMarker, markersconsts.K8sOptionalMarker},
+				SetB:        []string{markersconsts.RequiredMarker, markersconsts.KubebuilderRequiredMarker, markersconsts.K8sRequiredMarker},
+				Description: "A field cannot be both optional and required",
+			},
+			{
+				Name:        "default_vs_required",
+				SetA:        []string{markersconsts.DefaultMarker, markersconsts.KubebuilderDefaultMarker},
+				SetB:        []string{markersconsts.RequiredMarker, markersconsts.KubebuilderRequiredMarker, markersconsts.K8sRequiredMarker},
+				Description: "A field with a default value cannot be required",
+			},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +55,19 @@ func TestCustomConfiguration(t *testing.T) {
 	testdata := analysistest.TestData()
 
 	config := &conflictingmarkers.ConflictingMarkersConfig{
-		CustomConflicts: []conflictingmarkers.ConflictSet{
+		ConflictSets: []conflictingmarkers.ConflictSet{
+			{
+				Name:        "optional_vs_required",
+				SetA:        []string{markersconsts.OptionalMarker, markersconsts.KubebuilderOptionalMarker, markersconsts.K8sOptionalMarker},
+				SetB:        []string{markersconsts.RequiredMarker, markersconsts.KubebuilderRequiredMarker, markersconsts.K8sRequiredMarker},
+				Description: "A field cannot be both optional and required",
+			},
+			{
+				Name:        "default_vs_required",
+				SetA:        []string{markersconsts.DefaultMarker, markersconsts.KubebuilderDefaultMarker},
+				SetB:        []string{markersconsts.RequiredMarker, markersconsts.KubebuilderRequiredMarker, markersconsts.K8sRequiredMarker},
+				Description: "A field with a default value cannot be required",
+			},
 			{
 				Name:        "custom_conflict",
 				SetA:        []string{"custom:marker1", "custom:marker2"},
@@ -57,29 +85,4 @@ func TestCustomConfiguration(t *testing.T) {
 	}
 
 	analysistest.Run(t, testdata, analyzer, "b")
-}
-
-func TestDisableBuiltInConflicts(t *testing.T) {
-	testdata := analysistest.TestData()
-
-	config := &conflictingmarkers.ConflictingMarkersConfig{
-		DisableBuiltInConflicts: true,
-		CustomConflicts: []conflictingmarkers.ConflictSet{
-			{
-				Name:        "custom_conflict",
-				SetA:        []string{"custom:marker1", "custom:marker2"},
-				SetB:        []string{"custom:marker3", "custom:marker4"},
-				Description: "Custom markers conflict with each other",
-			},
-		},
-	}
-
-	initializer := conflictingmarkers.Initializer()
-
-	analyzer, err := initializer.Init(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	analysistest.Run(t, testdata, analyzer, "c")
 }

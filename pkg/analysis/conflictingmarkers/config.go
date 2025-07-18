@@ -17,14 +17,10 @@ package conflictingmarkers
 
 // ConflictingMarkersConfig contains the configuration for the conflictingmarkers linter.
 type ConflictingMarkersConfig struct {
-	// CustomConflicts allows users to define their own sets of conflicting markers.
+	// ConflictSets allows users to define sets of conflicting markers.
 	// Each entry defines a conflict between two sets of markers.
-	CustomConflicts []ConflictSet `json:"customConflicts"`
-
-	// DisableBuiltInConflicts allows users to opt-out of built-in conflict detection.
-	// When set to true, only custom conflicts defined in CustomConflicts will be checked.
-	// Built-in conflicts include optional_vs_required and default_vs_required checks.
-	DisableBuiltInConflicts bool `json:"disableBuiltInConflicts"`
+	// At least one conflict set must be provided.
+	ConflictSets []ConflictSet `json:"conflictSets"`
 }
 
 // ConflictSet represents a conflict between two sets of markers.

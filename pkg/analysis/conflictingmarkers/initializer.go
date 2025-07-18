@@ -33,7 +33,7 @@ func Initializer() initializer.AnalyzerInitializer {
 	return initializer.NewConfigurableInitializer(
 		name,
 		initAnalyzer,
-		true,
+		false, // An empty config is not valid
 		validateConfig,
 	)
 }
@@ -52,13 +52,17 @@ func validateConfig(cfg *ConflictingMarkersConfig, fldPath *field.Path) field.Er
 	fieldErrors := field.ErrorList{}
 	nameSet := sets.New[string]()
 
-	for i, conflictSet := range cfg.CustomConflicts {
+	if len(cfg.ConflictSets) == 0 {
+		fieldErrors = append(fieldErrors, field.Required(fldPath.Child("conflictSets"), "conflictSets is required and must contain at least 1 element"))
+	}
+
+	for i, conflictSet := range cfg.ConflictSets {
 		if nameSet.Has(conflictSet.Name) {
-			fieldErrors = append(fieldErrors, field.Invalid(fldPath.Child("customConflicts").Index(i).Child("name"), conflictSet.Name, "repeated value, names must be unique"))
+			fieldErrors = append(fieldErrors, field.Invalid(fldPath.Child("conflictSets").Index(i).Child("name"), conflictSet.Name, "repeated value, names must be unique"))
 			continue
 		}
 
-		fieldErrors = append(fieldErrors, validateConflictSet(conflictSet, fldPath.Child("customConflicts").Index(i))...)
+		fieldErrors = append(fieldErrors, validateConflictSet(conflictSet, fldPath.Child("conflictSets").Index(i))...)
 
 		nameSet.Insert(conflictSet.Name)
 	}

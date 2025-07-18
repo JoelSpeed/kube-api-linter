@@ -26,22 +26,9 @@ import (
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/helpers/inspector"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/helpers/markers"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/utils"
-	markersconsts "sigs.k8s.io/kube-api-linter/pkg/markers"
 )
 
 const name = "conflictingmarkers"
-
-func init() {
-	// Register all the markers we care about with the marker registry
-	markers.DefaultRegistry().Register(markersconsts.OptionalMarker)
-	markers.DefaultRegistry().Register(markersconsts.RequiredMarker)
-	markers.DefaultRegistry().Register(markersconsts.DefaultMarker)
-	markers.DefaultRegistry().Register(markersconsts.KubebuilderOptionalMarker)
-	markers.DefaultRegistry().Register(markersconsts.KubebuilderRequiredMarker)
-	markers.DefaultRegistry().Register(markersconsts.KubebuilderDefaultMarker)
-	markers.DefaultRegistry().Register(markersconsts.K8sOptionalMarker)
-	markers.DefaultRegistry().Register(markersconsts.K8sRequiredMarker)
-}
 
 type analyzer struct {
 	conflictSets []ConflictSet
@@ -53,7 +40,7 @@ func newAnalyzer(cfg *ConflictingMarkersConfig) *analysis.Analyzer {
 	}
 
 	// Register custom markers from configuration
-	for _, conflictSet := range cfg.CustomConflicts {
+	for _, conflictSet := range cfg.ConflictSets {
 		for _, markerID := range conflictSet.SetA {
 			markers.DefaultRegistry().Register(markerID)
 		}
@@ -63,18 +50,8 @@ func newAnalyzer(cfg *ConflictingMarkersConfig) *analysis.Analyzer {
 		}
 	}
 
-	var conflictSets []ConflictSet
-
-	// Add built-in conflicts unless disabled
-	if !cfg.DisableBuiltInConflicts {
-		conflictSets = append(conflictSets, defaultConflictSets()...)
-	}
-
-	// Add custom conflicts
-	conflictSets = append(conflictSets, cfg.CustomConflicts...)
-
 	a := &analyzer{
-		conflictSets: conflictSets,
+		conflictSets: cfg.ConflictSets,
 	}
 
 	return &analysis.Analyzer{
@@ -143,21 +120,4 @@ func reportConflict(pass *analysis.Pass, field *ast.Field, conflictSet ConflictS
 			sets.List(setAMarkers), sets.List(setBMarkers),
 			conflictSet.Description),
 	})
-}
-
-func defaultConflictSets() []ConflictSet {
-	return []ConflictSet{
-		{
-			Name:        "optional_vs_required",
-			SetA:        []string{markersconsts.OptionalMarker, markersconsts.KubebuilderOptionalMarker, markersconsts.K8sOptionalMarker},
-			SetB:        []string{markersconsts.RequiredMarker, markersconsts.KubebuilderRequiredMarker, markersconsts.K8sRequiredMarker},
-			Description: "A field cannot be both optional and required",
-		},
-		{
-			Name:        "default_vs_required",
-			SetA:        []string{markersconsts.DefaultMarker, markersconsts.KubebuilderDefaultMarker},
-			SetB:        []string{markersconsts.RequiredMarker, markersconsts.KubebuilderRequiredMarker, markersconsts.K8sRequiredMarker},
-			Description: "A field with a default value cannot be required",
-		},
-	}
 }

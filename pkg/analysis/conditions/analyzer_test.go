@@ -20,12 +20,13 @@ import (
 
 	"golang.org/x/tools/go/analysis/analysistest"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/conditions"
+	"sigs.k8s.io/kube-api-linter/pkg/config"
 )
 
 func TestDefaultConfiguration(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	a, err := conditions.Initializer().Init(&conditions.ConditionsConfig{})
+	a, err := conditions.Initializer().Init(config.ConfigPresetNative, &conditions.ConditionsConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestDefaultConfiguration(t *testing.T) {
 func TestNotFieldFirst(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	a, err := conditions.Initializer().Init(&conditions.ConditionsConfig{
+	a, err := conditions.Initializer().Init(config.ConfigPresetNative, &conditions.ConditionsConfig{
 		IsFirstField: conditions.ConditionsFirstFieldIgnore,
 	})
 	if err != nil {
@@ -49,7 +50,7 @@ func TestNotFieldFirst(t *testing.T) {
 func TestIgnoreProtobuf(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	a, err := conditions.Initializer().Init(&conditions.ConditionsConfig{
+	a, err := conditions.Initializer().Init(config.ConfigPresetNative, &conditions.ConditionsConfig{
 		UseProtobuf: conditions.ConditionsUseProtobufIgnore,
 	})
 	if err != nil {
@@ -62,7 +63,7 @@ func TestIgnoreProtobuf(t *testing.T) {
 func TestForbidProtobuf(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	a, err := conditions.Initializer().Init(&conditions.ConditionsConfig{
+	a, err := conditions.Initializer().Init(config.ConfigPresetNative, &conditions.ConditionsConfig{
 		UseProtobuf: conditions.ConditionsUseProtobufForbid,
 	})
 	if err != nil {
@@ -75,7 +76,7 @@ func TestForbidProtobuf(t *testing.T) {
 func TestIgnorePatchStrategy(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	a, err := conditions.Initializer().Init(&conditions.ConditionsConfig{
+	a, err := conditions.Initializer().Init(config.ConfigPresetNative, &conditions.ConditionsConfig{
 		UsePatchStrategy: conditions.ConditionsUsePatchStrategyIgnore,
 	})
 	if err != nil {
@@ -88,7 +89,7 @@ func TestIgnorePatchStrategy(t *testing.T) {
 func TestForbidPatchStrategy(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	a, err := conditions.Initializer().Init(&conditions.ConditionsConfig{
+	a, err := conditions.Initializer().Init(config.ConfigPresetNative, &conditions.ConditionsConfig{
 		UsePatchStrategy: conditions.ConditionsUsePatchStrategyForbid,
 	})
 	if err != nil {

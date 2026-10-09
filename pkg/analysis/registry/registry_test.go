@@ -45,7 +45,7 @@ var _ = Describe("Registry", func() {
 
 	Context("DefaultLinters", func() {
 		It("should return the default linters", func() {
-			Expect(r.DefaultLinters().UnsortedList()).To(ConsistOf(
+			Expect(r.DefaultLinters(config.ConfigPresetNative).UnsortedList()).To(ConsistOf(
 				"conditions",
 				"jsontags",
 				"optionalorrequired",
@@ -73,7 +73,7 @@ var _ = Describe("Registry", func() {
 		}
 
 		DescribeTable("Initialize Linters", func(in initLintersTableInput) {
-			linters, err := r.InitializeLinters(in.config, in.lintersConfig)
+			linters, err := r.InitializeLinters(config.ConfigPresetNative, in.config, in.lintersConfig)
 			Expect(err).NotTo(HaveOccurred())
 
 			toLinterNames := func(a []*analysis.Analyzer) []string {
@@ -134,7 +134,7 @@ var _ = Describe("Registry", func() {
 		}
 
 		DescribeTable("Validate Linters Configuration through Initialization", func(in validateLintersConfigTableInput) {
-			_, err := r.InitializeLinters(in.linters, in.config)
+			_, err := r.InitializeLinters(config.ConfigPresetNative, in.linters, in.config)
 			if len(in.expectedErr) > 0 {
 				Expect(err).To(MatchError(in.expectedErr))
 			} else {

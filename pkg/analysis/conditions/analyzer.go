@@ -28,6 +28,7 @@ import (
 	kalerrors "sigs.k8s.io/kube-api-linter/pkg/analysis/errors"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/helpers/extractjsontags"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/helpers/markers"
+	"sigs.k8s.io/kube-api-linter/pkg/config"
 )
 
 const (
@@ -68,12 +69,12 @@ type analyzer struct {
 }
 
 // newAnalyzer creates a new analyzer.
-func newAnalyzer(cfg *ConditionsConfig) *analysis.Analyzer {
+func newAnalyzer(preset config.ConfigPreset, cfg *ConditionsConfig) *analysis.Analyzer {
 	if cfg == nil {
 		cfg = &ConditionsConfig{}
 	}
 
-	defaultConfig(cfg)
+	defaultConfig(preset, cfg)
 
 	a := &analyzer{
 		isFirstField:     cfg.IsFirstField,
@@ -437,7 +438,16 @@ func isSliceMetaV1Condition(field *ast.Field) bool {
 	return true
 }
 
-func defaultConfig(cfg *ConditionsConfig) {
+func defaultConfig(preset config.ConfigPreset, cfg *ConditionsConfig) {
+	switch preset {
+	case config.ConfigPresetNative:
+		defaultNativeConfig(cfg)
+	case config.ConfigPresetCustomResource:
+		defaultCustomResourceConfig(cfg)
+	}
+}
+
+func defaultNativeConfig(cfg *ConditionsConfig) {
 	if cfg.IsFirstField == "" {
 		cfg.IsFirstField = ConditionsFirstFieldWarn
 	}
@@ -448,5 +458,19 @@ func defaultConfig(cfg *ConditionsConfig) {
 
 	if cfg.UsePatchStrategy == "" {
 		cfg.UsePatchStrategy = ConditionsUsePatchStrategySuggestFix
+	}
+}
+
+func defaultCustomResourceConfig(cfg *ConditionsConfig) {
+	if cfg.IsFirstField == "" {
+		cfg.IsFirstField = ConditionsFirstFieldWarn
+	}
+
+	if cfg.UseProtobuf == "" {
+		cfg.UseProtobuf = ConditionsUseProtobufForbid
+	}
+
+	if cfg.UsePatchStrategy == "" {
+		cfg.UsePatchStrategy = ConditionsUsePatchStrategyForbid
 	}
 }

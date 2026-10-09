@@ -30,7 +30,8 @@ func Initializer() initializer.AnalyzerInitializer {
 	return initializer.NewInitializer(
 		name,
 		Analyzer,
-		// Enable by default as this check prevents ambiguous YAML configurations
-		true,
+		// Enable by default for both Native and CustomResource types as this check prevents ambiguous YAML configurations
+		true, // DefaultNative
+		true, // DefaultCustomResource
 	)
 }

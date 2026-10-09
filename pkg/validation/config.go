@@ -29,7 +29,20 @@ func ValidateGolangCIConfig(g config.GolangCIConfig, fldPath *field.Path) error 
 
 	var fieldErrors field.ErrorList
 
+	fieldErrors = append(fieldErrors, ValidatePreset(g.Preset, fldPath.Child("preset"))...)
 	fieldErrors = append(fieldErrors, ValidateLinters(g.Linters, fldPath.Child("linters"))...)
 
 	return fieldErrors.ToAggregate()
+}
+
+func ValidatePreset(preset config.ConfigPreset, fldPath *field.Path) field.ErrorList {
+	fieldErrors := field.ErrorList{}
+
+	switch preset {
+	case config.ConfigPresetNative, config.ConfigPresetCustomResource:
+	default:
+		fieldErrors = append(fieldErrors, field.NotSupported(fldPath, preset, []string{string(config.ConfigPresetNative), string(config.ConfigPresetCustomResource)}))
+	}
+
+	return fieldErrors
 }

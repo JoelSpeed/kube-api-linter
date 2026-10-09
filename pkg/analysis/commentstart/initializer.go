@@ -30,6 +30,7 @@ func Initializer() initializer.AnalyzerInitializer {
 	return initializer.NewInitializer(
 		name,
 		Analyzer,
-		true,
+		true, // DefaultNative
+		true, // DefaultCustomResource
 	)
 }

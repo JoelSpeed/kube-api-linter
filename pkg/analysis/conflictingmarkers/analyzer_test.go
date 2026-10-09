@@ -20,12 +20,13 @@ import (
 
 	"golang.org/x/tools/go/analysis/analysistest"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/conflictingmarkers"
+	"sigs.k8s.io/kube-api-linter/pkg/config"
 )
 
 func TestConflictingMarkersAnalyzer(t *testing.T) {
 	testdata := analysistest.TestData()
 
-	config := &conflictingmarkers.ConflictingMarkersConfig{
+	cfg := &conflictingmarkers.ConflictingMarkersConfig{
 		Conflicts: []conflictingmarkers.ConflictSet{
 			{
 				Name:        "test_conflict",
@@ -42,7 +43,7 @@ func TestConflictingMarkersAnalyzer(t *testing.T) {
 
 	initializer := conflictingmarkers.Initializer()
 
-	analyzer, err := initializer.Init(config)
+	analyzer, err := initializer.Init(config.ConfigPresetNative, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/initializer"
 	"sigs.k8s.io/kube-api-linter/pkg/analysis/registry"
+	"sigs.k8s.io/kube-api-linter/pkg/config"
 )
 
 func init() {
@@ -34,13 +35,14 @@ func Initializer() initializer.AnalyzerInitializer {
 	return initializer.NewConfigurableInitializer(
 		name,
 		initAnalyzer,
-		true,
+		true, // DefaultNative
+		true, // DefaultCustomResource
 		validateConfig,
 	)
 }
 
-func initAnalyzer(cc *ConditionsConfig) (*analysis.Analyzer, error) {
-	return newAnalyzer(cc), nil
+func initAnalyzer(preset config.ConfigPreset, cc *ConditionsConfig) (*analysis.Analyzer, error) {
+	return newAnalyzer(preset, cc), nil
 }
 
 // validateConfig implements validation of the conditions linter config.
